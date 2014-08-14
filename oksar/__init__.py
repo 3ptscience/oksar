@@ -12,12 +12,17 @@
 
 import numpy as np
 from utils3pt import Vector
+from Los import getLOSvector
 
 
 class Forward(object):
     """docstring for Forward"""
     def __init__(self, model):
         self.model = model
+
+    def getLos(self, eq, utmLoc):
+        refPoint = Vector(eq.interferogram_refx, eq.interferogram_refy, 0)
+        return getLOSvector(utmLoc, eq.locationUTMzone, refPoint, eq.satellite_altitude, eq.satellite_azimuth, eq.interferogram_ref_incidence, eq.local_earth_radius)
 
     def getDir(self, x, y):
         model = self.model
