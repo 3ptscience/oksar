@@ -14,9 +14,9 @@ def getLOSvector(utmLoc, utmZone, refPoint, satAltitude, satAzimuth, satIncidenc
     #calculate angular separation of (x,y) from satellite track passing through (origx,origy) with azimuth satAzimuth
 
     # Long lat **NOT** lat long
-    origy, origx = utm.to_latlon(refPoint.x, refPoint.y, utmZone, northern=utmZone>0)
+    origy, origx = utm.to_latlon(refPoint.x, refPoint.y, np.abs(utmZone), northern=utmZone>0)
 
-    xy = np.array([utm.to_latlon(u[0],   u[1],   utmZone, northern=utmZone>0) for u in utmLoc])
+    xy = np.array([utm.to_latlon(u[0],   u[1],   np.abs(utmZone), northern=utmZone>0) for u in utmLoc])
     y = xy[:,0]
     x = xy[:,1]
 
