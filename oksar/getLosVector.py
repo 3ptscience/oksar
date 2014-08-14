@@ -30,12 +30,8 @@ def getLOSvector(utmLoc, utmZone, refPoint, satAltitude, satAzimuth, satIncidenc
     alpha2 = np.sin(beta2) / (np.cos(beta2) - (earthRadius/(earthRadius+satAltitude)))
     alpha2 = np.arctan(alpha2)
     alpha2 = alpha2/DEG2RAD
-    print alpha2
-    print beta2
-    print 'beta', beta
 
     # calculate pointing vector
-    # printf("incidence = %lf\n",alpha2)
 
     satIncidence = 90 - alpha2
     satAzimuth   = 360 - satAzimuth
@@ -81,7 +77,6 @@ def ang_to_gc( x, y, origx,  origy,  satAzimuth):
     angdist = Ngc[0]*cartxy[:,0] + Ngc[1]*cartxy[:,1] + Ngc[2]*cartxy[:,2]
     angdist = np.rad2deg(np.arccos(angdist)) - 90
 
-    print angdist
     return angdist
 
 
