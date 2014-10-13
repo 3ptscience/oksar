@@ -229,9 +229,9 @@ class Forward(object):
                 duz = dub.y*c0_sd + dub.z*c0_cd
                 du = Vector(dux,duy,duz)
                 if((j+k)!=3):
-                    u = u + du
+                    u = + du + u
                 else:
-                    u = u - du
+                    u = - du + u
 
         return u
 
