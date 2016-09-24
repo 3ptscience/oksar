@@ -22,7 +22,11 @@ class Forward(object):
         self.model = model
 
     def getLos(self, eq, utmLoc):
-        refPoint = vmath.Vector3(eq.interferogram_refx, eq.interferogram_refy, 0)
+        refPoint = vmath.Vector3(
+            eq.interferogram_refx,
+            eq.interferogram_refy,
+            0
+        )
         return getLOSvector(
             utmLoc,
             eq.locationUTMzone,
