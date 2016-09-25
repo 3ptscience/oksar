@@ -498,7 +498,12 @@ if __name__ == '__main__':
     eq = EarthquakeInterferogram(
         uid="dinar",
         title="Dinar, Turkey",
-        description="On October 1, 1995, a strong earthquake ruptured a section of the Dinar-Civril fault in SW Turkey. Around 30% of the buildings in the nearby town of Dinar were destroyed. 92 inhabitants were killed and over 200 injured.",
+        description=(
+            "On October 1, 1995, a strong earthquake ruptured a section of "
+            "the Dinar-Civril fault in SW Turkey. Around 30% of the buildings "
+            "in the nearby town of Dinar were destroyed. 92 inhabitants were "
+            "killed and over 200 injured."
+        ),
         # data_type_p=float32,
         event_country="Turkey",
         event_date="1995-09-30 (18:00:00.000) MDT",
