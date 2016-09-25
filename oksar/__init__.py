@@ -19,6 +19,7 @@ import numpy as np
 import properties
 import vectormath as vmath
 import utm
+import matplotlib.pyplot as plt
 
 
 class EarthquakeInterferogram(properties.UidModel):
@@ -119,6 +120,60 @@ class EarthquakeInterferogram(properties.UidModel):
     event_gcmt_id = properties.String("GCMT ID")
     event_name = properties.String("Earthquake name")
     event_country = properties.String("Earthquake country")
+
+    def plot(self, wrap=True, ax=None):
+
+        if ax is None:
+            fig = plt.figure()
+            ax = plt.subplot(111)
+
+        vectorNx = (
+            np.r_[
+                0,
+                np.cumsum(
+                    (self.pixel_size[0],) * self.shape[0]
+                )
+            ] + self.location[0]
+        )
+        vectorNy = (
+            np.r_[
+                0,
+                np.cumsum(
+                    (self.pixel_size[1],) * self.shape[1]
+                )
+            ] + self.location[1]
+        ) - self.pixel_size[1] * self.shape[1]
+
+        data = self.data.copy()
+        data = np.flipud(data.reshape(self.shape, order='F').T)
+        data[data == 0] = np.nan
+        data *= self.scaling
+
+        if wrap:
+            cmap = plt.cm.hsv
+            data = data % self.satellite_fringe_interval
+            vmin, vmax = 0.0, self.satellite_fringe_interval
+        else:
+            cmap = plt.cm.jet
+            vmin = np.nanmin(data)
+            vmax = np.nanmax(data)
+
+        out = plt.pcolormesh(
+            vectorNx,
+            vectorNy,
+            np.ma.masked_where(np.isnan(data), data),
+            vmin=vmin,
+            vmax=vmax,
+            cmap=cmap
+        )
+
+        ax.set_title(self.title)
+        ax.axis('tight')
+        ax.set_xlabel('x')
+        ax.set_ylabel('y')
+
+        cb = plt.colorbar(out)
+        cb.set_label('Displacement, m')
 
 
 class Oksar(properties.HasProperties()):
@@ -504,17 +559,16 @@ if __name__ == '__main__':
             "in the nearby town of Dinar were destroyed. 92 inhabitants were "
             "killed and over 200 injured."
         ),
-        # data_type_p=float32,
         event_country="Turkey",
-        event_date="1995-09-30 (18:00:00.000) MDT",
+        event_date="1995-09-30T18:00:00Z",
         event_gcmt_id="100195B",
         event_name="Dinar",
         copyright="ESA",
         data_source="ESA",
-        date1="1995-08-12 (18:00:00.000) MDT",
-        date2="1995-12-31 (17:00:00.000) MDT",
+        date1="1995-08-12T18:00:00Z",
+        date2="1995-12-31T17:00:00Z",
         processed_by="GarethFunning",
-        processed_date="2003-01-20 (17:00:00.000) MDT",
+        processed_date="2003-01-20T17:00:00Z",
         ref_incidence=23,
         ref=[741140., 4230327.],
         scaling=0.0045040848895,
