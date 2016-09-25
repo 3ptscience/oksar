@@ -16,47 +16,160 @@ from __future__ import print_function
 from __future__ import unicode_literals
 
 import numpy as np
+import properties
 import vectormath as vmath
 import utm
 
 
-class Forward(object):
+class EarthquakeInterferogram(properties.UidModel):
+    location = properties.Vector2(
+        "interferogram location (bottom N, left E)",
+        required=True
+    )
 
-    def __init__(self, model):
-        self.model = model
+    location_UTM_zone = properties.Integer(
+        "UTM zone",
+        required=True
+    )
+
+    shape = properties.Array(
+        "number of pixels in the interferogram",
+        shape=(2,),
+        dtype=int,
+        required=True
+    )
+
+    pixel_size = properties.Array(
+        "Size of each pixel (northing, easting)",
+        shape=(2,),
+        dtype=float,
+        required=True
+    )
+
+    data = properties.Array(
+        "Processed interferogram data (unwrapped)",
+        dtype=float,
+        required=True
+    )
+
+    ref = properties.Vector2(
+        "interferogram reference",
+        required=True
+    )
+
+    ref_incidence = properties.Float(
+        "Incidence angle"
+    )
+
+    scaling = properties.Float(
+        "Scaling of the interferogram",
+        default=1.0
+    )
+
+    satellite_name = properties.String("Name of the satelite.")
+    satellite_fringe_interval = properties.Float(
+        "Fringe interval",
+        default=0.028333
+    )
+
+    satellite_azimuth = properties.Float("satellite_azimuth")
+    satellite_altitude = properties.Float("satellite_altitude")
+
+    local_rigidity = properties.Float(
+        "Local rigidity",
+        default=3e10
+    )
+
+    local_earth_radius = properties.Float(
+        "Earth radius",
+        default=6371000.
+    )
+
+    date1 = properties.DateTime(
+        "date1",
+        required=True
+    )
+
+    date2 = properties.DateTime(
+        "date2",
+        required=True
+    )
+
+    processed_by = properties.String(
+        "processed_by",
+        required=True
+    )
+
+    processed_date = properties.DateTime(
+        "processed_date",
+        required=True
+    )
+
+    copyright = properties.String(
+        "copyright",
+        required=True
+    )
+
+    data_source = properties.String(
+        "data_source",
+        required=True
+    )
+
+    event_date = properties.DateTime("Date of the earthquake")
+    event_gcmt_id = properties.String("GCMT ID")
+    event_name = properties.String("Earthquake name")
+    event_country = properties.String("Earthquake country")
+
+
+class Oksar(properties.HasProperties()):
+
+    beta = properties.Float("beta", default=3E10)
+    mu = properties.Float("mu", default=3E10)
+
+    strike = properties.Float("Strike", min=0, max=360)
+    dip = properties.Float("Dip", default=45, min=0, max=90)
+    rake = properties.Float("Rake", default=90, min=-180, max=180)
+    slip = properties.Float("Slip", default=0.5, min=0)
+    length = properties.Float("Fault length", default=10000., min=0)
+    center = properties.Vector2("Center of the fault plane.")
+    depth_top = properties.Float("Top of fault", min=0)
+    depth_bottom = properties.Float("Bottom of fault", default=10000, min=0)
 
     def getLos(self, eq, utmLoc):
+        assert isinstance(eq, EarthquakeInterferogram)
+
         refPoint = vmath.Vector3(
-            eq.interferogram_refx,
-            eq.interferogram_refy,
+            eq.ref[0],
+            eq.ref[1],
             0
         )
+
         return getLOSvector(
             utmLoc,
-            eq.locationUTMzone,
+            eq.location_UTM_zone,
             refPoint,
             eq.satellite_altitude,
             eq.satellite_azimuth,
-            eq.interferogram_ref_incidence,
+            eq.ref_incidence,
             eq.local_earth_radius
         )
 
     def getDir(self, x, y):
-        model = self.model
+        model = self
         DEG2RAD = 0.017453292519943
         alpha = (model.beta + model.mu) / (model.beta + 2.0 * model.mu)
 
         #  Here we could loop over models
 
-        flt_x = model.center.x
-        flt_y = model.center.y
+        flt_x = model.center[0]
+        flt_y = model.center[1]
         strike = model.strike
         dip = model.dip
         rake = model.rake
         slip = model.slip
         length = model.length
-        hmin = model.depthT
-        hmax = model.depthB
+        hmin = model.depth_top
+        hmax = model.depth_bottom
 
         rrake = (rake+90.0)*DEG2RAD
         sindip = np.sin(dip*DEG2RAD)
@@ -74,12 +187,15 @@ class Forward(object):
 
         if(hmin == 0.0):
             hmin = 0.00001
+
         sstrike = (strike+90.0)*DEG2RAD
+
         ct = np.cos(sstrike)
         st = np.sin(sstrike)
 
-        X = ct*(-flt_x+x)-st*(-flt_y+y)
-        Y = ct*(-flt_y+y)+st*(-flt_x+x)
+        X = ct * (-flt_x + x) - st * (-flt_y + y)
+        Y = ct * (-flt_y + y) + st * (-flt_x + x)
+
         u = self.dc3d3(alpha, X, Y, -dip, al1, al2, aw1, aw2, us, ud)
 
         UX = ct*u.x + st*u.y
@@ -100,7 +216,7 @@ class Forward(object):
 
         #  %%dccon0 subroutine
         #  Calculates medium and fault dip constants
-        c0_alp3 = (F1-alpha)/alpha
+        c0_alp3 = (F1 - alpha) / alpha
         #  PI2/360
         pl8 = 0.017453292519943
         c0_sd = np.sin(dip*pl8)
@@ -139,9 +255,9 @@ class Forward(object):
                 else:
                     xi = X-al2
 
-    #          %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-    #          %%dccon2 subroutine
-    #          % calculates station geometry constants for finite source
+                # %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                # %%dccon2 subroutine
+                # % calculates station geometry constants for finite source
 
                 dc_max = np.max(np.abs(np.c_[xi, et, q]))
 
@@ -289,7 +405,7 @@ def getLOSvector(
     beta = beta / DEG2RAD
 
     # calculate angular separation of (x,y) from satellite track passing
-    # through (origx,origy) with azimuth satAzimuth
+    # through (origx, origy) with azimuth satAzimuth
 
     # Long lat **NOT** lat long
     origy, origx = utm.to_latlon(
@@ -308,8 +424,8 @@ def getLOSvector(
     # calculate beta2, the angle at earth center between roaming point and
     # satellite nadir track, assuming right-looking satellite
 
-    beta2 = beta-angdist
-    beta2 = beta2*DEG2RAD
+    beta2 = beta - angdist
+    beta2 = beta2 * DEG2RAD
 
     # calculate alpha2, the new incidence angle
 
@@ -377,31 +493,56 @@ def ang_to_gc(x, y, origx, origy, satAzimuth):
     return angdist
 
 
-class InSarModel(object):
-    def __init__(self):
-        pass
+if __name__ == '__main__':
 
-    beta = 3E10
-    mu = 3E10
+    eq = EarthquakeInterferogram(
+        uid="dinar",
+        title="Dinar, Turkey",
+        description="On October 1, 1995, a strong earthquake ruptured a section of the Dinar-Civril fault in SW Turkey. Around 30% of the buildings in the nearby town of Dinar were destroyed. 92 inhabitants were killed and over 200 injured.",
+        # data_type_p=float32,
+        event_country="Turkey",
+        event_date="1995-09-30 (18:00:00.000) MDT",
+        event_gcmt_id="100195B",
+        event_name="Dinar",
+        copyright="ESA",
+        data_source="ESA",
+        date1="1995-08-12 (18:00:00.000) MDT",
+        date2="1995-12-31 (17:00:00.000) MDT",
+        processed_by="GarethFunning",
+        processed_date="2003-01-20 (17:00:00.000) MDT",
+        ref_incidence=23,
+        ref=[741140., 4230327.],
+        scaling=0.0045040848895,
+        local_earth_radius=6386232,
+        local_rigidity=30000000000,
+        location=[706216.0606, 4269238.9999],
+        shape=[1024, 1024],
+        location_UTM_zone=35,
+        pixel_size=[80., 80],
+        satellite_altitude=788792,
+        satellite_azimuth=192,
+        satellite_fringe_interval=0.028333333,
+        satellite_name="ERS"
+    )
 
-    sx = 432
-    sy = 232
-    strike = 329.6
-    dip = 50
-    rake = 90
-    slip = 0.5
-    length = 11578.907244622129
-    center = vmath.Vector3(773728.2977967655, 4223586.816611591, 0)
-    depthT = 0
-    depthB = 15000
+    f = Oksar(
+        beta=3E10,
+        mu=3E10,
+        strike=329.6,
+        dip=50,
+        rake=90,
+        slip=0.5,
+        length=11578.907244622129,
+        center=[773728.2977967655, 4223586.816611591],
+        depth_top=0,
+        depth_bottom=15000,
+    )
+
     wv = 0.028333
     rigidity = 30000000000
 
     LOS = vmath.Vector3(0.3825, 0.0780, 0.9205)
 
-
-if __name__ == '__main__':
-    f = Forward(InSarModel)
     n = 300
     O = vmath.Vector3(706216.0606, 4187318.9999, 0)
     U = vmath.Vector3(81920, 0, 0)
