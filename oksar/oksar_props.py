@@ -2,7 +2,6 @@ import properties
 
 location = properties.Vector2(
     "interferogram location (bottom N, left E)",
-    dtype=float,
     required=True
 )
 
@@ -12,7 +11,7 @@ location_UTM_zone = properties.Integer(
 )
 
 interferogram_shape = properties.Array(
-    "number of pixels in the interferogram"
+    "number of pixels in the interferogram",
     shape=(2,),
     dtype=int,
     required=True
@@ -27,7 +26,6 @@ interferogram_pixel_size = properties.Array(
 
 interferogram_ref = properties.Vector2(
     "interferogram reference",
-    dtype=float,
     required=True
 )
 
@@ -90,8 +88,8 @@ interferogram_data_source = properties.String(
 )
 
 event_date = properties.DateTime("Date of the earthquake")
-event_gcmt_id = properties.String()
-event_name = properties.String()
-event_country = properties.String()
+event_gcmt_id = properties.String("GCMT ID")
+event_name = properties.String("Earthquake name")
+event_country = properties.String("Earthquake country")
 
-data_type_p = properties.String()
+# data_type_p = properties.String("")
