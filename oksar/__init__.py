@@ -37,6 +37,7 @@ class EarthquakeInterferogram(properties.UidModel):
         "number of pixels in the interferogram",
         shape=(2,),
         dtype=int,
+        wrapper=tuple,
         required=True
     )
 
@@ -59,7 +60,8 @@ class EarthquakeInterferogram(properties.UidModel):
     )
 
     ref_incidence = properties.Float(
-        "Incidence angle"
+        "Incidence angle",
+        required=True
     )
 
     scaling = properties.Float(
@@ -68,13 +70,21 @@ class EarthquakeInterferogram(properties.UidModel):
     )
 
     satellite_name = properties.String("Name of the satelite.")
+
     satellite_fringe_interval = properties.Float(
         "Fringe interval",
         default=0.028333
     )
 
-    satellite_azimuth = properties.Float("satellite_azimuth")
-    satellite_altitude = properties.Float("satellite_altitude")
+    satellite_azimuth = properties.Float(
+        "satellite_azimuth",
+        required=True
+    )
+
+    satellite_altitude = properties.Float(
+        "satellite_altitude",
+        required=True
+    )
 
     local_rigidity = properties.Float(
         "Local rigidity",
@@ -121,11 +131,7 @@ class EarthquakeInterferogram(properties.UidModel):
     event_name = properties.String("Earthquake name")
     event_country = properties.String("Earthquake country")
 
-    def plot(self, wrap=True, ax=None):
-
-        if ax is None:
-            fig = plt.figure()
-            ax = plt.subplot(111)
+    def _get_plot_data(self):
 
         vectorNx = (
             np.r_[
@@ -149,6 +155,18 @@ class EarthquakeInterferogram(properties.UidModel):
         data[data == 0] = np.nan
         data *= self.scaling
 
+        return vectorNx, vectorNy, data
+
+    def plot_interferogram(self, wrap=True, ax=None):
+
+        self.assert_valid
+
+        if ax is None:
+            fig = plt.figure()
+            ax = plt.subplot(111)
+
+        vectorNx, vectorNy, data = self._get_plot_data()
+
         if wrap:
             cmap = plt.cm.hsv
             data = data % self.satellite_fringe_interval
@@ -168,12 +186,149 @@ class EarthquakeInterferogram(properties.UidModel):
         )
 
         ax.set_title(self.title)
-        ax.axis('tight')
-        ax.set_xlabel('x')
-        ax.set_ylabel('y')
+        ax.axis('equal')
+        ax.set_xlabel('Easting, m (UTM Zone {})'.format(
+            self.location_UTM_zone
+        ))
+        ax.set_ylabel('Northing, m')
 
         cb = plt.colorbar(out)
         cb.set_label('Displacement, m')
+
+        return out
+
+    def plot_mask(self, ax=None, opacity=0.2):
+
+        if ax is None:
+            fig = plt.figure()
+            ax = plt.subplot(111)
+
+        vectorNx, vectorNy, data = self._get_plot_data()
+
+        from matplotlib import colors
+        cmap = colors.ListedColormap([(1, 1, 1, opacity)])
+
+        out = plt.pcolormesh(
+            vectorNx,
+            vectorNy,
+            np.ma.masked_where(~np.isnan(data), data),
+            cmap=cmap
+        )
+
+        return out
+
+    def get_LOS_vector(self, locations):
+        """
+            calculate beta - the angle at earth center between reference point
+            and satellite nadir
+        """
+
+        utmZone = self.location_UTM_zone
+        refPoint = vmath.Vector3(self.ref[0], self.ref[1], 0)
+        satAltitude = self.satellite_altitude
+        satAzimuth = self.satellite_azimuth
+        satIncidence = self.ref_incidence
+        earthRadius = self.local_earth_radius
+
+        DEG2RAD = np.pi / 180.
+        alpha = satIncidence * DEG2RAD
+        beta = (earthRadius / (satAltitude + earthRadius)) * np.sin(alpha)
+        beta = alpha - np.arcsin(beta)
+        beta = beta / DEG2RAD
+
+        # calculate angular separation of (x,y) from satellite track passing
+        # through (origx, origy) with azimuth satAzimuth
+
+        # Long lat **NOT** lat long
+        origy, origx = utm.to_latlon(
+            refPoint.x, refPoint.y, np.abs(utmZone), northern=utmZone > 0
+        )
+
+        xy = np.array([
+            utm.to_latlon(u[0], u[1], np.abs(utmZone), northern=utmZone > 0)
+            for u in locations
+        ])
+        y = xy[:, 0]
+        x = xy[:, 1]
+
+        angdist = self._ang_to_gc(x, y, origx, origy, satAzimuth)
+
+        # calculate beta2, the angle at earth center between roaming point and
+        # satellite nadir track, assuming right-looking satellite
+
+        beta2 = beta - angdist
+        beta2 = beta2 * DEG2RAD
+
+        # calculate alpha2, the new incidence angle
+
+        alpha2 = np.sin(beta2) / (
+            np.cos(beta2) - (earthRadius / (earthRadius + satAltitude))
+        )
+        alpha2 = np.arctan(alpha2)
+        alpha2 = alpha2 / DEG2RAD
+
+        # calculate pointing vector
+
+        satIncidence = 90 - alpha2
+        satAzimuth = 360 - satAzimuth
+
+        los_x = -np.cos(satAzimuth * DEG2RAD) * np.cos(satIncidence * DEG2RAD)
+        los_y = -np.sin(satAzimuth * DEG2RAD) * np.cos(satIncidence * DEG2RAD)
+        los_z = np.sin(satIncidence * DEG2RAD)
+
+        return vmath.Vector3(los_x, los_y, los_z)
+
+    @staticmethod
+    def _ang_to_gc(x, y, origx, origy, satAzimuth):
+        """
+            Calculate angular distance to great circle passing through
+            given point
+        """
+
+        Ngc = np.zeros(3)
+        cartxy = np.zeros((len(x), 3))
+        satAzimuth = np.deg2rad(satAzimuth)
+        origx = np.deg2rad(origx)
+        origy = np.deg2rad(origy)
+
+        x = np.deg2rad(x)
+        y = np.deg2rad(y)
+
+        # 1. calc geocentric norm vec to great circle, Ngc = Rz*Ry*Rx*[0;1;0]
+        #    where Rz = rotation of origx about geocentric z-axis
+        #    where Ry = rotation of origy about geocentric y-axis
+        #    where Rx = rotation of satAzimuth about geocentric x-axis
+        #    and [0;1;0] is geocentric norm vec to N-S Great Circle through 0 0
+
+        Ngc[0] = (
+                    (np.sin(satAzimuth) * np.sin(origy) * np.cos(origx)) -
+                    (np.cos(satAzimuth) * np.sin(origx))
+                 )
+        Ngc[1] = (
+                    (np.sin(satAzimuth) * np.sin(origy) * np.sin(origx)) +
+                    (np.cos(satAzimuth) * np.cos(origx))
+                 )
+        Ngc[2] = -np.sin(satAzimuth) * np.cos(origy)
+
+        # 2. calculate unit vector geocentric coordinates for lon/lat
+        #    position (x,y)
+
+        cartxy[:, 0] = np.cos(x) * np.cos(y)
+        cartxy[:, 1] = np.sin(x) * np.cos(y)
+        cartxy[:, 2] = np.sin(y)
+
+        # 3. Dot product between Ngc and cartxy gives angle 90 degrees
+        #    bigger than what we want
+
+        angdist = (
+                        Ngc[0]*cartxy[:, 0] +
+                        Ngc[1]*cartxy[:, 1] +
+                        Ngc[2]*cartxy[:, 2]
+                  )
+
+        angdist = np.rad2deg(np.arccos(angdist)) - 90
+
+        return angdist
 
 
 class Oksar(properties.HasProperties()):
@@ -190,41 +345,62 @@ class Oksar(properties.HasProperties()):
     depth_top = properties.Float("Top of fault", min=0)
     depth_bottom = properties.Float("Bottom of fault", default=10000, min=0)
 
-    def getLos(self, eq, utmLoc):
-        assert isinstance(eq, EarthquakeInterferogram)
+    O = properties.Vector2(
+        "Origin of the simulation domain", required=True
+    )
 
-        refPoint = vmath.Vector3(
-            eq.ref[0],
-            eq.ref[1],
-            0
+    U = properties.Vector2(
+        "U direction of the simulation domain", required=True
+    )
+
+    V = properties.Vector2(
+        "V direction of the simulation domain", required=True
+    )
+
+    shape = properties.Array(
+        "number of pixels in the simulation",
+        shape=(2,),
+        default=(300, 300),
+        dtype=int,
+        wrapper=tuple,
+        required=True
+    )
+
+    @property
+    def simulation_grid(self):
+
+        self.assert_valid
+
+        vec, shape = vmath.ouv2vec(
+            vmath.Vector3(self.O[0], self.O[1], 0),
+            vmath.Vector3(self.U[0], self.U[1], 0),
+            vmath.Vector3(self.V[0], self.V[1], 0),
+            self.shape
         )
+        return vec
 
-        return getLOSvector(
-            utmLoc,
-            eq.location_UTM_zone,
-            refPoint,
-            eq.satellite_altitude,
-            eq.satellite_azimuth,
-            eq.ref_incidence,
-            eq.local_earth_radius
-        )
+    @property
+    def displacement_vector(self):
 
-    def getDir(self, x, y):
-        model = self
+        self.assert_valid
+
+        vec = self.simulation_grid
+        x, y = vec.x, vec.y
+
         DEG2RAD = 0.017453292519943
-        alpha = (model.beta + model.mu) / (model.beta + 2.0 * model.mu)
+        alpha = (self.beta + self.mu) / (self.beta + 2.0 * self.mu)
 
         #  Here we could loop over models
 
-        flt_x = model.center[0]
-        flt_y = model.center[1]
-        strike = model.strike
-        dip = model.dip
-        rake = model.rake
-        slip = model.slip
-        length = model.length
-        hmin = model.depth_top
-        hmax = model.depth_bottom
+        flt_x = self.center[0]
+        flt_y = self.center[1]
+        strike = self.strike
+        dip = self.dip
+        rake = self.rake
+        slip = self.slip
+        length = self.length
+        hmin = self.depth_top
+        hmax = self.depth_bottom
 
         rrake = (rake+90.0)*DEG2RAD
         sindip = np.sin(dip*DEG2RAD)
@@ -251,7 +427,7 @@ class Oksar(properties.HasProperties()):
         X = ct * (-flt_x + x) - st * (-flt_y + y)
         Y = ct * (-flt_y + y) + st * (-flt_x + x)
 
-        u = self.dc3d3(alpha, X, Y, -dip, al1, al2, aw1, aw2, us, ud)
+        u = self._dc3d3(alpha, X, Y, -dip, al1, al2, aw1, aw2, us, ud)
 
         UX = ct*u.x + st*u.y
         UY = -st*u.x + ct*u.y
@@ -259,7 +435,7 @@ class Oksar(properties.HasProperties()):
 
         return vmath.Vector3(UX, UY, UZ)
 
-    def dc3d3(self, alpha, X, Y, dip, al1, al2, aw1, aw2, disl1, disl2):
+    def _dc3d3(self, alpha, X, Y, dip, al1, al2, aw1, aw2, disl1, disl2):
         F0 = 0.0
         F1 = 1.0
         F2 = 2.0
@@ -439,114 +615,70 @@ class Oksar(properties.HasProperties()):
 
         return u
 
+    def plot_displacement(self, eq, ax=None, wrap=True, mask_opacity=0.2):
 
-def getLOSvector(
-        utmLoc,
-        utmZone,
-        refPoint,
-        satAltitude,
-        satAzimuth,
-        satIncidence,
-        earthRadius):
-    """
-        calculate beta - the angle at earth center between reference point and
-        satellite nadir
-    """
+        assert isinstance(eq, EarthquakeInterferogram)
 
-    DEG2RAD = np.pi / 180.
-    alpha = satIncidence * DEG2RAD
-    beta = (earthRadius / (satAltitude + earthRadius)) * np.sin(alpha)
-    beta = alpha - np.arcsin(beta)
-    beta = beta / DEG2RAD
+        if ax is None:
+            fig = plt.figure()
+            ax = plt.subplot(111)
 
-    # calculate angular separation of (x,y) from satellite track passing
-    # through (origx, origy) with azimuth satAzimuth
+        vectorNx = (
+            np.r_[
+                0,
+                np.cumsum(
+                    (self.U[0]/self.shape[0],) * self.shape[0]
+                )
+            ] + self.O[0]
+        )
+        vectorNy = (
+            np.r_[
+                0,
+                np.cumsum(
+                    (self.V[1]/self.shape[1],) * self.shape[1]
+                )
+            ] + self.O[1]
+        )
 
-    # Long lat **NOT** lat long
-    origy, origx = utm.to_latlon(
-        refPoint.x, refPoint.y, np.abs(utmZone), northern=utmZone > 0
-    )
+        DIR = self.displacement_vector
+        grid = self.simulation_grid
+        LOS = eq.get_LOS_vector(grid)
+        data = DIR.dot(LOS)
+        data = np.flipud(data.reshape(self.shape, order='F').T)
+        # data[data == 0] = np.nan
+        # data *= self.scaling
 
-    xy = np.array([
-        utm.to_latlon(u[0], u[1], np.abs(utmZone), northern=utmZone > 0)
-        for u in utmLoc
-    ])
-    y = xy[:, 0]
-    x = xy[:, 1]
+        if wrap:
+            cmap = plt.cm.hsv
+            data = data % eq.satellite_fringe_interval
+            vmin, vmax = 0.0, eq.satellite_fringe_interval
+        else:
+            cmap = plt.cm.jet
+            vmin = np.nanmin(data)
+            vmax = np.nanmax(data)
 
-    angdist = ang_to_gc(x, y, origx, origy, satAzimuth)
+        out = plt.pcolormesh(
+            vectorNx,
+            vectorNy,
+            np.ma.masked_where(np.isnan(data), data),
+            vmin=vmin,
+            vmax=vmax,
+            cmap=cmap
+        )
 
-    # calculate beta2, the angle at earth center between roaming point and
-    # satellite nadir track, assuming right-looking satellite
+        ax.set_title(eq.title)
+        ax.axis('equal')
+        ax.set_xlabel('Easting, m (UTM Zone {})'.format(
+            eq.location_UTM_zone
+        ))
+        ax.set_ylabel('Northing, m')
 
-    beta2 = beta - angdist
-    beta2 = beta2 * DEG2RAD
+        cb = plt.colorbar(out)
+        cb.set_label('Displacement, m')
 
-    # calculate alpha2, the new incidence angle
+        mask = eq.plot_mask(ax=ax, opacity=mask_opacity)
 
-    alpha2 = np.sin(beta2) / (
-        np.cos(beta2) - (earthRadius / (earthRadius + satAltitude))
-    )
-    alpha2 = np.arctan(alpha2)
-    alpha2 = alpha2 / DEG2RAD
-
-    # calculate pointing vector
-
-    satIncidence = 90 - alpha2
-    satAzimuth = 360 - satAzimuth
-
-    los_x = -np.cos(satAzimuth * DEG2RAD) * np.cos(satIncidence * DEG2RAD)
-    los_y = -np.sin(satAzimuth * DEG2RAD) * np.cos(satIncidence * DEG2RAD)
-    los_z = np.sin(satIncidence * DEG2RAD)
-
-    return vmath.Vector3(los_x, los_y, los_z)
-
-
-def ang_to_gc(x, y, origx, origy, satAzimuth):
-    """
-        Calculate angular distance to great circle passing through given point
-    """
-
-    Ngc = np.zeros(3)
-    cartxy = np.zeros((len(x), 3))
-    satAzimuth = np.deg2rad(satAzimuth)
-    origx = np.deg2rad(origx)
-    origy = np.deg2rad(origy)
-
-    x = np.deg2rad(x)
-    y = np.deg2rad(y)
-
-    # 1. calculate geocentric norm vec to great circle, Ngc = Rz*Ry*Rx*[0;1;0]
-    #    where Rz = rotation of origx about geocentric z-axis
-    #    where Ry = rotation of origy about geocentric y-axis
-    #    where Rx = rotation of satAzimuth about geocentric x-axis
-    #    and [0;1;0] is geocentric norm vec to N-S Great Circle through 0 0
-
-    Ngc[0] = (
-                (np.sin(satAzimuth) * np.sin(origy) * np.cos(origx)) -
-                (np.cos(satAzimuth) * np.sin(origx))
-             )
-    Ngc[1] = (
-                (np.sin(satAzimuth) * np.sin(origy) * np.sin(origx)) +
-                (np.cos(satAzimuth) * np.cos(origx))
-             )
-    Ngc[2] = -np.sin(satAzimuth) * np.cos(origy)
-
-    # 2. calculate unit vector geocentric coordinates for lon/lat
-    #    position (x,y)
-
-    cartxy[:, 0] = np.cos(x) * np.cos(y)
-    cartxy[:, 1] = np.sin(x) * np.cos(y)
-    cartxy[:, 2] = np.sin(y)
-
-    # 3. Dot product between Ngc and cartxy gives angle 90 degrees
-    #    bigger than what we want
-
-    angdist = Ngc[0]*cartxy[:, 0] + Ngc[1]*cartxy[:, 1] + Ngc[2]*cartxy[:, 2]
-    angdist = np.rad2deg(np.arccos(angdist)) - 90
-
-    return angdist
-
+        return (out, mask)
 
 if __name__ == '__main__':
 
@@ -595,6 +727,10 @@ if __name__ == '__main__':
         center=[773728.2977967655, 4223586.816611591],
         depth_top=0,
         depth_bottom=15000,
+        O=[706216.0606, 4187318.9999],
+        U=[81920, 0],
+        V=[0, 81920],
+        shape=(300, 200)
     )
 
     wv = 0.028333
@@ -624,4 +760,5 @@ if __name__ == '__main__':
     # climMin=-0.621606826782
     # climMax=0.0770393759012
     # uid=dinar
-    DIR = f.getDir(vec.x, vec.y)
+    DIR = f.displacement_vector
+
