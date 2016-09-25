@@ -3,7 +3,7 @@ DEPRECIATED --> geoana
 
 The functionality in this repository has been moved to:
 
-https://gihub.com/simpeg/geoana
+https://github.com/simpeg/geoana
 
 
 oksar
